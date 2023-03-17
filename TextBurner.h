@@ -12,7 +12,7 @@
 namespace netline {
 namespace module {
 
-/// Сама текстовая зона, умеет рассчитывать перенос строк и скейлить высоту зоны, при передаче буля в функцию
+/// Handle line folding and scale height of text
 class TextZone {
 public:
     TextZone(const std::wstring & text, const cv::Rect & zone, FT_Face & face, int text_space = 0)
@@ -47,7 +47,7 @@ public:
     cv::Rect getZoneRect() const { return m_zone;}
     std::vector<std::wstring> getWTextRows() const { return m_text_rows;}
 
-    /// Основная функция, нужна для создания переноса строк, когда необходимо, и подтягивания высоты самой зоны к тексту
+    /// main function to split text into lines and adjusting height of it
     void createRowsFromText(const bool fit_text_zone_height_to_rows) {
         createTextRowsAndExpandHeightIfNeeded(fit_text_zone_height_to_rows);
     }
@@ -62,8 +62,8 @@ private:
             words.push_back(word);
         }
 
-        /// тут удаляются пробелы, при необходимости использования нескольких пробелов подряд - нужно будет усложнить тело while.
-        /// (!)следует обратить внимание, что все слова, после первого, идут с префиксным пробелом(!)
+        /// removing extra spaces
+        /// (!)take into account that all new words after the first one go with space at the beginning
         words.front().erase(0, 1);
 
         int symbol_width = static_cast<int>(calculateStringWidth(L"w"));
@@ -75,14 +75,14 @@ private:
             resize(m_zone.width, symbol_height);
 
         const size_t max_symbols_in_row = static_cast<size_t>(m_zone.width / symbol_width);
-        /// вот тут считаем по словам, переносим по словам, и если слово не помещается целое по ширине, то его будем переносить посимвольно.
+        /// calculate words and split lines acording to it. If single word is too big we are going to use char-by-char split
         for (auto iter = words.begin(); iter != words.end(); iter++) {
             size_t word_length = iter->size();
 
             if (static_cast<size_t>(word_length + m_text_rows.back().size()) > max_symbols_in_row) {
                 if (m_text_rows.back().empty()) {
-                    // $TODO: вот тут самое интересное, в строке нет еще ни слова, но при этом уже первое не помещается, критический случай
-                    // нужен перенос посимвольный.
+                    // $TODO: the whole word is too big for one line, critical case which should be handled
+                    // we need char by char folding
                     if (iter->front() == L' ')
                         iter->erase(0,1);
 
@@ -91,9 +91,9 @@ private:
                     m_text_rows.push_back(std::wstring());
                     iter--;
                 } else {
-                    /// отправляем на обработку то же самое слово, но уже на новой строке, ыхыхыхых.
+                    /// sending new word to a new line
                     m_text_rows.push_back(std::wstring());
-                    /// обязательно удаляем предшествующий пробел, а то будет непонятный отступ в начале
+                    /// removing space at the beginning
                     iter->erase(0,1);
                     iter--;
                     if (m_zone.height < symbol_height * static_cast<int>(m_text_rows.size()))
@@ -105,7 +105,7 @@ private:
             }
         }
 
-        /// ресайзим зону по высоте, если изначальной недостаточно
+        /// adding some height if initial value is not enough
         /// fit_text_zone_height_to_rows - флаг, который означает что высоту текстовой_зоны будем подгонять под ее содержимое
         const int needed_height = symbol_height * static_cast<int>(m_text_rows.size());
         if (m_zone.height < needed_height || fit_text_zone_height_to_rows)
@@ -169,9 +169,10 @@ public:
     }
 
     void setOperateFlags(const uint32_t flags) {
-        /// коректная работа проверялась только с флагами:
+        /// has been tested only with those flags:
         /// REMOVE_EMPTY_SPACE_Y | SCALE_Y | NO_INTERSECTIONS | TEXT_ZONE_HEIGHT_UP_TO_TEXT
-        /// Остальные комбинации заложены на будущее и будет необходима сильная доработка ::placeCorrectlyTextZones()
+        
+        /// All other combinations are for future and this function should be updated ::placeCorrectlyTextZones()
         for (uint32_t i = 0; i < calculateWorkModeFlagPositionInEnum(END_FLAG); i++)
             m_work_mode.push_back(static_cast<bool>(flags & (1 << i)));
     }
@@ -194,7 +195,7 @@ public:
         */
         long symbol_width = slot->advance.x / 64;
 
-        /// увеличиваем шрифт, пока длина строки, состоящая из symbols_in_row не превышает ширину изображения
+        /// increase font size until string with symbols_in_row do not exceed the width of image
         while (symbol_width * symbols_in_row < image_width) {
             font_size++;
             FT_Set_Pixel_Sizes(face, font_size, 0);
@@ -203,7 +204,7 @@ public:
             symbol_width = slot->advance.x / 64;
         }
 
-        /// уменьшаем шрифт, пока длина строки, состоящая из symbols_in_row не становится меньше ширины изображения
+        /// decrease font size until string with symbols_in_row fits the width of image
         while (symbol_width * symbols_in_row > image_width) {
             font_size--;
             FT_Set_Pixel_Sizes(face, font_size, 0);
@@ -244,7 +245,7 @@ public:
                 zone.scale(scale_factor);
         }
 
-        /// отрисовка и подгон текста, необходимый и обязательный цикл
+        /// scaling text and printing it to image
         for (auto & text_zone : text_zones) {
             text_zone.createRowsFromText(text_zone_up_to_height);
         }
@@ -298,10 +299,10 @@ private:
                 if (intersection.empty())
                     continue;
 
-                /// все сравнения относительно первого. Двигаем только второй рект, первый считается установленым верно.
-                /// положительный y_direction означает смещение второй зоны ВНИЗ
-                /// положительный x_direction означает смещение второй зоны ВПРАВО
-                /// используется система координат, нуль которой в верхнем левом углу монитора, ось oY направлена вниз, ось oX направлена направо.
+                /// all comparisons are done acording to the first rect, we will move only the second one. Firs one should be considered as correclty positioned
+                /// y_direction > 0 means second rect goes up
+                /// x_direction > 0 meanst second rect goes right
+                /// beginning of system of coordinates is located in upper left corner. oY goes down and oX goes right
                 const int8_t x_direction = base_rect.x - current_rect.x > 0 ? -1 : 1;
                 const int8_t y_direction = base_rect.x - current_rect.y > 0 ? -1 : 1;
 
@@ -309,13 +310,13 @@ private:
                     return;
 
                 if (intersection.width >= (base_rect.width / 2.5)) {
-                    /// используем смещение по игрику
+                    /// using shift on oY
                     if (y_direction > 0)
                         text_zones.at(i).move(cv::Point(current_rect.x, base_rect.y + 1));
                     else
                         text_zones.at(i).move(cv::Point(current_rect.x, current_rect.y - current_rect.height - 1));
                 } else {
-                    /// используем смещение по иксу
+                    /// using shift on oX
                     if (x_direction > 0)
                         text_zones.at(i).move(cv::Point(base_rect.x + base_rect.width + 1, current_rect.y));
                     else
@@ -360,10 +361,9 @@ private:
 
 /******************************************************************/
 
-/// Класс для отладки в отдельном проекте, НЕ использовать в torx, т.к. использует отрисовку и показ изображения
+/// Class for testing, do not use it in the main project
 class TextBurnerDebuger {
 public:
-    /// Для отладки в отдельном проекте, НЕ использовать в torx, т.к. использует отрисовку и показ изображения
     static void showTextZonesFormation(const std::vector<TextZone> & text_zones) {
         cv::Point left_top(INT_MAX, INT_MAX);
         cv::Point right_bottom(INT_MIN, INT_MIN);
@@ -409,8 +409,7 @@ public:
         m_text_zones.push_back(TextZone(toWString(text), rect, m_ft_face, 5));
     }
 
-    /// Каждый раз будет добавлять еще одну строку с текстом, крайне не рекомендуется использовать совместно с appendTextZone
-    /// Либо у вас есть готовое расположение текстовок, либо вы пользуетесь этим методом.
+    /// Adding a new line of text, it is not recommended to use it with ::appendTextZone()
     void appendTextRow(const std::wstring & text) {
         if (m_image == nullptr)
             throw TextBurnerException("set image before appending text!");
@@ -467,12 +466,12 @@ public:
         }
     }
 private:
-    /// добавить зону для текстовых_зон
+    /// Add a zone for text zone
     void appendBackgroundToImage(const cv::Scalar & color, const int height) {
         m_image->push_back(cv::Mat(height, m_image->cols, m_image->type(), color));
     }
 
-    /// отрисовать текстовую_зону
+    /// draw text zone
     void burnTextZoneToImage(const TextZone & text_zone, const int x_0, const int y_0) {
         FT_UInt previous = 0;
         long y_advance = 0;
@@ -491,7 +490,7 @@ private:
                  * For example, a size object holds the value of certain metrics like the ascender or text height,
                  * expressed in 1/64th of a pixel, for a character size of 12 points (however, those values are rounded to integers, i.e., multiples of 64).
                 */
-                x_advance = slot->advance.x / 64; // считается только после Рендер_Глиф
+                x_advance = slot->advance.x / 64; // should be calculated only after Render_Glyph
 
                 FT_Load_Glyph(m_ft_face, glyph_index, FT_LOAD_DEFAULT);
                 FT_Render_Glyph(slot, FT_RENDER_MODE_NORMAL);
@@ -504,7 +503,7 @@ private:
         }
     }
 
-    /// отрисовать один символ на m_image
+    /// Draw one char on m_image
     void burnBitmapToImage(FT_Bitmap * bitmap, const int x_shift, const int y_shift) {
         for (int row = 0; row < static_cast<int>(bitmap->rows); row++) {
             for (int col = 0; col < static_cast<int>(bitmap->width); col++) {
